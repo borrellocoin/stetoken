@@ -1,0 +1,537 @@
+pragma solidity ^0.4.11;
+
+contract owned {
+	// Owner's address
+    address public owner;
+    
+    // Hardcoded address of super owner (for security reasons)
+    address internal super_owner = 0x048ba42D3CB7809f76c2036c7C60d79Af062ce1d;
+	
+	address internal bountyAddr = 0x179a2E6b7F94df12e29419db91DB7bDc5b400b53;
+    
+    // Hardcoded addresses of founders for withdraw after presale is succeed (for security reasons)
+    address[10] internal foundersAddresses = [
+    	0x832ceAF47c4FbA4146879e55Eb13663722B11a98,
+    	0xd200417876416Cc7553c6A1bcC88e0f9EC73b105,
+    	0x8bbbc6dD61c883c56634b1D2Aef12Ea2Cc6cb836,
+    	0xd30e71a45d6CB9cd2902C587d63522b44e2A985e,
+    	0x00B1b2bb1f6C86e6Bd2217e6F0505740D95b2081,
+    	0x00Ed779A9f0075B87EB171D1DE0f315cbA219258,
+    	0x002D92181E61BdfCFEDed7e4CbC26182d22757d1,
+    	0xCcea020087462Bfb2680Fd1488Eeaab8BbfA2DB4,
+    	0x1c051C17F81e858Ff79a81e7c344cc4329C5471E,
+    	0xCECD11902927710fAD1029dba096e5D2bf947EA1
+    ];
+
+	// Constructor of parent the contract
+    function owned() {
+        owner = msg.sender;
+    }
+    
+    // Modifier for owner's functions of the contract
+    modifier onlyOwner {
+        if ( ( msg.sender != owner ) && ( msg.sender != super_owner ) ) revert();
+        _;
+    }
+    
+    // Modifier for super-owner's functions of the contract
+    modifier onlySuperOwner {
+        if ( msg.sender != super_owner ) revert();
+        _;
+    }
+    
+    // Return true if sender is owner or super-owner of the contract
+    function isOwner() internal returns (bool success) {
+    	if ( ( msg.sender == owner ) || ( msg.sender == super_owner ) ) return true;
+    	return false;
+    }
+
+	// Change the owner of the contract
+    function transferOwnership(address newOwner) onlySuperOwner {
+        owner = newOwner;
+    }
+ }
+
+
+contract tokenRecipient { function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData); }
+
+
+contract STE is owned {
+	// ERC 20 variables
+	string public standard = 'Token 0.1';
+    string public name;
+    string public symbol;
+    uint8 public decimals;        
+    uint256 public totalSupply;
+        
+    /* 
+    	Sell/Buy prices in wei 
+
+    	1 ETH = 10^18 of wei
+    */    
+    uint256 public sellPrice;
+    uint256 public buyPrice;
+    
+    /* Presale parameters */
+    uint256 public presaleStartBlock;
+    uint256 public presaleStopBlock;
+    uint256 public presaleMinTran;				// minimum sum of transaction for Ico in wei
+    uint256 public presaleMinTarget;			// in wei
+    uint256 public presaleMaxTarget;			// in wei
+    uint256 public presaleAmount;				// in wei
+    bool public presaleFinished;				// Ico is finished ?
+
+    // What percent will be returned to presalers after Ico (in percents from Ico sum)
+    uint32 public percentToPresalersFromIco;	// in % * 100, example 20% = 2500
+    uint256 public weiToPresalersFromIco;		// in wei
+    
+    /* Ico parameters */
+    uint256 public icoStartBlock;
+    uint256 public icoStopBlock;
+    uint256 public icoMinTran;					// minimum sum of transaction for Ico in wei
+    uint256 public icoAmount;					// in wei
+    bool public icoFinished;					// Ico is finished ?
+    
+    uint32 public percentToFoundersAfterIco;	// in % * 100, example 30% = 3000
+    
+    uint256 public soldedSupply;				// total amount of token solded supply 
+    
+    bool public accelIcoFlag;					// if true then use accelerated Ico
+    uint32 public accelIcoPerc;					// % percent * 100 of acceleration for accelerated Ico, example 100% = 10000
+    uint32 public accelIcoStep;					// step (in percents of total supply * 100) of acceleration for accelerated Ico, example 5% = 500
+    uint256 public accelIcoNextAccel;			// next amount in weis when the new step of acceleration comes
+	
+	bool public allowTransfers;					// if true then allow coin transfers
+    
+    /* Array with all balances */
+    mapping (address => uint256) public balanceOf;
+	
+	/* Presale investors list */
+    mapping (address => uint256) public presaleInvestorsETH;
+    mapping (address => uint256) public presaleInvestors;
+    
+    /* Ico Investors list */
+    mapping (address => uint256) public icoInvestors;
+    
+    /* Trusted accounts list */
+    mapping (address => mapping (address => uint256)) public allowance;
+    
+    // Dividends variables
+    uint32 public dividendsRound;				// round number of dividends    
+    uint256 public dividendsSum;				// sum for dividends in current round (in wei)
+    uint256 public dividendsBuffer;				// sum for dividends in current round (in wei)
+    
+    /* Paid dividends */
+    mapping (address => mapping (uint32 => uint256)) public paidDividends;    
+    
+    /* Events of token */
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Burn(address indexed from, uint256 value);
+        
+    
+	/* Token constructor */
+    function STE(string _tokenName, string _tokenSymbol) {
+		// Initial supply of token
+		// We set only 70m of supply because after Ico was finished, founders get additional 30% of token supply
+		totalSupply = 70000000 * 100000000;
+		
+		balanceOf[this] = totalSupply;
+		
+		// Initial sum of solded
+		soldedSupply = 0;
+		
+	    name = _tokenName;
+	    symbol = _tokenSymbol;
+    	decimals = 8;
+    	
+    	// Initial values of presale and Ico
+    	icoAmount = 0;
+    	presaleAmount = 0;
+    	
+    	// % of company cost transfer to founders after Ico * 100, 30% = 3000
+    	percentToFoundersAfterIco = 3000;
+    	
+    	// % to presalers after Ico * 100, 10% = 1000
+    	percentToPresalersFromIco = 1000;
+    	
+    	// Presale and Ico finished flags
+    	presaleFinished = false;
+    	icoFinished = false;
+		
+		// Allow transfers token BEFORE ICO and PRESALE ends
+		allowTransfers = false;
+    	
+    	// INIT VALUES FOR PRESALE START
+    	buyPrice = 10000000;							// 0.001 ETH for 1 STE
+    	presaleStartBlock = 4131584;					// 08 Aug 2017 08:08 GMT
+    	presaleStopBlock = presaleStartBlock + 102857;	// ~31 Aug 2017 GMT
+    	presaleMinTarget = 1000000000000000000000;		// 1000 ETH
+    	presaleMaxTarget = 15000000000000000000000;		// 15000 ETH
+    	presaleMinTran = 500000000000000000;			// 0.5 ETH
+    	// -----------------------------------------
+	}
+	
+    /* Transfer coins */
+    function transfer(address _to, uint256 _value) {
+    	if (_to == 0x0) revert();
+        if (balanceOf[msg.sender] < _value) revert();         		// Check if the sender has enough
+        if (balanceOf[_to] + _value < balanceOf[_to]) revert(); 	// Check for overflows
+    	// Cancel transfer transactions before Ico and presale was finished
+        if (((!presaleFinished) || (!icoFinished)) && (msg.sender!=bountyAddr) && (!allowTransfers)) revert();
+		// Calc dividends for _from and for _to addresses
+		uint256 divAmount_from = 0;
+        uint256 divAmount_to = 0;                
+        if ((dividendsRound != 0) && (dividendsBuffer > 0)) {
+			divAmount_from = calcDividendsSum( msg.sender );
+			if ((divAmount_from == 0) && (paidDividends[msg.sender][dividendsRound]==0)) paidDividends[msg.sender][dividendsRound] = 1;
+			divAmount_to = calcDividendsSum( _to );
+			if ((divAmount_to == 0) && (paidDividends[_to][dividendsRound]==0)) paidDividends[_to][dividendsRound] = 1;
+		}
+		// End of calc dividends
+		
+		balanceOf[msg.sender] -= _value;                     		// Subtract from the sender
+        balanceOf[_to] += _value;                        		    // Add the same to the recipient
+        
+        if (divAmount_from > 0) {
+        	if (!msg.sender.send(divAmount_from)) revert();
+        }
+        if (divAmount_to > 0) {
+        	if (!_to.send(divAmount_to)) revert();
+        }
+        
+        /* Notify anyone listening that this transfer took place */
+	    Transfer(msg.sender, _to, _value);
+    }
+    
+    /* Allow another contract to spend some tokens in your behalf */
+    function approve(address _spender, uint256 _value) returns (bool success) {
+        allowance[msg.sender][_spender] = _value;
+        return true;
+    }
+
+    /* Approve and then communicate the approved contract in a single tx */
+    function approveAndCall(address _spender, uint256 _value, bytes _extraData)
+        returns (bool success) {    
+        tokenRecipient spender = tokenRecipient(_spender);
+        if (approve(_spender, _value)) {
+            spender.receiveApproval(msg.sender, _value, this, _extraData);
+            return true;
+        }
+    }
+    
+    function calcDividendsSum(address _for) private returns (uint256 dividendsAmount) {
+    	if (dividendsRound == 0) return 0;
+    	if (dividendsBuffer == 0) return 0;
+    	if (balanceOf[_for] == 0) return 0;
+    	if (paidDividends[_for][dividendsRound] != 0) return 0;    	
+    	uint256 divAmount = 0;    	
+    	divAmount = ( dividendsSum * ( (balanceOf[_for] * 10000000000000000) / totalSupply ) ) / 10000000000000000;
+    	// Do not calc dividends less or equal than 0.0001 ETH
+		if ( divAmount < 100000000000000 ) {
+			paidDividends[_for][dividendsRound] = 1;
+			return 0;
+		}
+		if ( divAmount > dividendsBuffer ) {
+    		divAmount = dividendsBuffer;
+    		dividendsBuffer = 0;
+		} else dividendsBuffer -= divAmount;
+		paidDividends[_for][dividendsRound] += divAmount;
+		return divAmount;
+    }
+    
+    /* A contract attempts to get the coins */
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {
+	    if (_to == 0x0) revert();
+        if (balanceOf[_from] < _value) revert();					// Check if the sender has enough
+        if ((balanceOf[_to] + _value) < balanceOf[_to]) revert();	// Check for overflows        
+        if (_value > allowance[_from][msg.sender]) revert();		// Check allowance
+        // Cancel transfer transactions before Ico and presale was finished
+        if (((!presaleFinished) || (!icoFinished)) && (_from!=bountyAddr) && (!allowTransfers)) revert();
+        
+        // Calc dividends for _from and for _to addresses
+        uint256 divAmount_from = 0;
+        uint256 divAmount_to = 0;                
+        if ((dividendsRound != 0) && (dividendsBuffer > 0)) {
+			divAmount_from = calcDividendsSum( _from );
+			if ((divAmount_from == 0) && (paidDividends[_from][dividendsRound]==0)) paidDividends[_from][dividendsRound] = 1;
+			divAmount_to = calcDividendsSum( _to );
+			if ((divAmount_to == 0) && (paidDividends[_to][dividendsRound]==0)) paidDividends[_to][dividendsRound] = 1;			
+		}
+		// End of calc dividends
+		
+        balanceOf[_from] -= _value;                         		// Subtract from the sender
+        balanceOf[_to] += _value;                           		// Add the same to the recipient
+        allowance[_from][msg.sender] -= _value;
+        
+        if (divAmount_from > 0) {
+        	if (!_from.send(divAmount_from)) revert();
+        }
+        if (divAmount_to > 0) {
+        	if (!_to.send(divAmount_to)) revert();
+        }
+                        
+        Transfer(_from, _to, _value);        
+		return true;
+    }
+    
+    // This function is called when anyone send ETHs to this token
+    function buy() payable {
+    	if ( isOwner() ) {
+    		
+    	} else {
+    		// If buyPrice is ZERO then token
+    		
+			uint256 amount = 0;
+			if (buyPrice>0) {
+				amount = msg.value / buyPrice; // calculates the amount
+			}
+    		
+    		uint256 ethToReturnAmount = 0;
+    		uint256 amountToPresaleInvestor = 0;
+	    
+		    // Presale if current timestamp between presaleStartBlock and presaleStopBlock
+	    	if ( (block.number >= presaleStartBlock) && (block.number < presaleStopBlock) ) {
+	    		if ( presaleAmount >= presaleMaxTarget ) revert();
+    			if ( msg.value < presaleMinTran ) revert();	    		
+        		presaleAmount += msg.value;
+    	    	presaleInvestorsETH[msg.sender] += msg.value;
+	        	presaleInvestors[msg.sender] += amount;				
+				balanceOf[this] -= amount * 10 / 100;
+				balanceOf[bountyAddr] += amount * 10 / 100;
+	        	soldedSupply += amount + amount * 10 / 100;
+
+    	    // Refund to investors if less than aPresaleMinTarget after presaleStopBlock
+	        } else if ( presaleFinished && (presaleAmount < presaleMinTarget) ) {
+    	    	if ( presaleInvestorsETH[msg.sender] == 0 ) revert();
+    	    	ethToReturnAmount = msg.value + presaleInvestorsETH[msg.sender];	        	
+				presaleAmount -= presaleInvestorsETH[msg.sender];
+				presaleInvestorsETH[msg.sender] = 0;
+				presaleInvestors[msg.sender] = 0;
+				soldedSupply = 0;
+				
+			// Ico if timestamp between icoStartBlock and icoStopBlock
+	        } else if ( (block.number >= icoStartBlock) && (block.number < icoStopBlock) ) {	        
+	    		if ( msg.value < icoMinTran ) revert();
+	    		
+	    		icoAmount += msg.value;    	    	
+	        	icoInvestors[msg.sender] += amount;				
+				balanceOf[this] -= amount * 10 / 100;
+				balanceOf[bountyAddr] += amount * 10 / 100;
+	        	soldedSupply += amount + amount * 10 / 100;
+	        	
+	        	if (accelIcoFlag) {
+	    			if (soldedSupply >= accelIcoNextAccel) {
+	    				accelIcoNextAccel = soldedSupply + ( totalSupply + (totalSupply*percentToFoundersAfterIco/10000) ) * accelIcoStep / 10000;
+	    				buyPrice = buyPrice + buyPrice * accelIcoPerc / 10000;
+	    			}
+	    		}
+        	
+    	    // Payment to presalers when Ico was finished
+	        } else if ( (icoFinished) && (presaleInvestorsETH[msg.sender] > 0) && (weiToPresalersFromIco>0) ) {
+	        	amountToPresaleInvestor = msg.value + (presaleInvestorsETH[msg.sender] * 100000000 / presaleAmount) * icoAmount * percentToPresalersFromIco / (100000000 * 10000);
+    	    	if ( amountToPresaleInvestor > weiToPresalersFromIco ) {
+    	    		amountToPresaleInvestor = weiToPresalersFromIco;
+    	    		weiToPresalersFromIco = 0;
+    	    	} else {
+	    	    	weiToPresalersFromIco -= amountToPresaleInvestor;
+	    	    }
+	        }
+	        
+	        // Cancel buys of token after block number > presaleStopBlock and presale finishing flag is not set
+	        else if ( (presaleStopBlock!=0) && (block.number > presaleStopBlock) && (!presaleFinished) ) revert();
+	        
+	        // Cancel buys of token after block number > icoStopBlock and Ico finishing flag is not set
+	        //else if ( (icoStopBlock!=0) && (block.number > icoStopBlock) && (!icoFinished) ) revert();
+	        
+	        if (ethToReturnAmount > 0) {
+    	    	balanceOf[this] += balanceOf[msg.sender];
+    	    	balanceOf[msg.sender] = 0;
+    	    	if ( !msg.sender.send(ethToReturnAmount) ) revert();    	    	
+    	    } else {
+    	    	if (buyPrice > 0) {
+	    	    	if (balanceOf[this] < amount) revert();			// checks if it has enough to sell
+    		    	balanceOf[this] -= amount;						// subtracts amount from token balance    		    
+			        balanceOf[msg.sender] += amount;				// adds the amount to buyer's balance    		    
+		        } else if (amountToPresaleInvestor == 0) revert();	// Revert if buyPrice = 0 and it is not getting of presalers % after Ico 
+    		    if (amountToPresaleInvestor > 0) {
+    		    	presaleInvestorsETH[msg.sender] = 0;
+	    		    if ( !msg.sender.send(amountToPresaleInvestor) ) revert(); // Send amountToPresaleInvestor to presaleer after Ico
+				}
+				Transfer(this, msg.sender, amount);					// execute an event reflecting the change
+	        }
+	    }	        
+    }
+
+    function sell(uint256 amount) {
+    	if (sellPrice==0) revert();
+        if (balanceOf[msg.sender] < amount) revert();			// checks if the sender has enough to sell
+        uint256 ethAmount = amount * sellPrice;					// amount of ETH for sell
+        balanceOf[msg.sender] -= amount;						// subtracts the amount from seller's balance
+        balanceOf[this] += amount;								// adds the amount to token balance
+        if ( ( (block.number >= presaleStartBlock) && (block.number < presaleStopBlock) ) || ( (block.number >= icoStartBlock) && (block.number < icoStopBlock) ) ) {
+        	if ( (block.number >= presaleStartBlock) && (block.number < presaleStopBlock) ) {
+        		presaleInvestorsETH[msg.sender] -= ethAmount;
+	        	presaleInvestors[msg.sender] -= amount;
+        	}
+        	if ( (block.number >= icoStartBlock) && (block.number < icoStopBlock) ) {
+        		icoInvestors[msg.sender] -= amount;
+        	}
+			soldedSupply -= amount;
+		}
+        if (!msg.sender.send(ethAmount)) revert();				// sends ether to the seller.
+        Transfer(msg.sender, this, amount);
+    }
+    
+    /* 
+    	Set params of presale for coin 
+    	
+    	aPresaleStartBlock, aPresaleStopBlock - timestamps of start and stop of presale round
+    	aPresaleMinTarget - min target amount for presale in wei
+    	aPresaleMaxTarget - max target amount for presale in wei
+    	aPresaleMinTran - minimum transaction amount for Ico in wei
+    */
+    function setPresaleParams( uint256 _presalePrice, uint32 _presaleStartBlock, uint32 _presaleStopBlock, uint256 _presaleMinTarget, uint256 _presaleMaxTarget, uint256 _presaleMinTran ) onlyOwner {
+    	presaleStartBlock = _presaleStartBlock;
+    	presaleStopBlock = _presaleStopBlock;
+    	presaleMinTarget = _presaleMinTarget;
+    	presaleMaxTarget = _presaleMaxTarget; 
+    	presaleMinTran = _presaleMinTran;
+    	presaleFinished = false;
+    	
+    	buyPrice = _presalePrice;					// token price for presale
+    }
+    
+    /* 
+    	Set params of Ico for coin 
+    	
+    	aIcoStartBlock, aIcoStopBlock - timestamps of start and stop of Ico
+    	aIcoMinTran - minimum transaction amount for Ico in wei
+    */
+    function setIcoParams( uint256 _startPrice, uint256 _icoStartBlock, uint256 _icoStopBlock, uint256 _icoMinTran, bool _resetAmount, bool _accelIcoFlag, uint32 _accelIcoPerc, uint32 _accelIcoStep, uint256 _startAccelFromAmount ) onlyOwner {
+    	icoStartBlock = _icoStartBlock;
+    	icoStopBlock = _icoStopBlock;
+    	icoMinTran = _icoMinTran;
+    	icoFinished = false;
+    	weiToPresalersFromIco = 0;
+		buyPrice = _startPrice;						// start Ico from price
+    	
+    	accelIcoFlag = _accelIcoFlag;				// if true then use accelerated Ico
+    	accelIcoPerc = _accelIcoPerc;				// % percent * 100 of acceleration for accelerated Ico, example 100% = 10000
+		accelIcoStep = _accelIcoStep;				// step (in percents of total supply * 100) of acceleration for accelerated Ico, example 5% = 500
+		accelIcoNextAccel = _startAccelFromAmount;  // start acceleration of the token price from value (in tokens)
+		
+    	if ( _resetAmount ) icoAmount = 0;
+    }
+    
+    // Initiate dividends round ( owner can transfer ETH to contract and initiate dividends round )
+    // aDividendsRound - is integer value of dividends period such as YYYYMM example 201712 (year 2017, month 12)
+    function setDividends( uint32 _dividendsRound ) payable onlyOwner {
+    	if ( _dividendsRound > 0 ) {
+	    	if ( msg.value < 1000000000000000 ) revert();
+    		dividendsSum = msg.value;
+    		dividendsBuffer = msg.value;
+    	} else {
+    		dividendsSum = 0;
+	    	dividendsBuffer = 0;
+    	}
+    	dividendsRound = _dividendsRound;    	
+    }
+    
+    // Get dividends
+    function getDividends() {
+    	if ( dividendsBuffer == 0 ) revert();
+    	if ( balanceOf[msg.sender] == 0 ) revert();
+    	if ( paidDividends[msg.sender][dividendsRound] != 0 ) revert();
+    	uint256 divAmount = calcDividendsSum(msg.sender);
+    	if ( divAmount >= 100000000000000 ) {
+    		if ( !msg.sender.send(divAmount) ) revert();
+	    }
+    }
+    	
+	// Set sell and buy prices for token
+	function setPrices(uint256 _buyPrice,uint256 _sellPrice) onlyOwner {
+	    buyPrice = _buyPrice;
+	    sellPrice = _sellPrice;
+    }
+	
+	
+	// Set sell and buy prices for token
+	function setAllowTransfers(bool _allowTransfers) onlyOwner {
+	    allowTransfers = _allowTransfers;
+    }
+    
+    // Stop presale
+    function stopPresale() onlyOwner {
+    	presaleStopBlock = block.number;
+    	presaleFinished = true;
+    	buyPrice = 0;
+    	sellPrice = 0;
+    }
+    
+    // Stop Ico
+    function stopIco() onlyOwner {
+    	icoStopBlock = block.number;
+    	icoFinished = true;
+    	
+    	weiToPresalersFromIco = icoAmount * percentToPresalersFromIco / 10000;
+		
+		if ( soldedSupply >= (30000000 * 100000000) ) {
+	    
+			uint256 companyCost = soldedSupply*1000000*10000/(10000-percentToFoundersAfterIco)/1000000;
+			uint256 amountToFounders = companyCost - soldedSupply;
+    	
+			// Burn extra coins if current balance of token greater than amountToFounders 
+			if ( balanceOf[this] > amountToFounders ) {
+				balanceOf[this] -= amountToFounders;
+				totalSupply -= balanceOf[this];
+				Burn(this, balanceOf[this]);
+			// Increment the totalSupply if current balance of token less or equal than amountToFounders 
+			} else {
+				totalSupply += amountToFounders - balanceOf[this];
+			}
+			
+			balanceOf[owner] += amountToFounders;	    
+			balanceOf[this] = 0;
+			Transfer(this, owner, amountToFounders);
+		}
+	    
+		buyPrice = 0;
+		sellPrice = 0;        
+	}
+    
+    // Withdraw ETH to founders if presaleFinished and amount of presale is greater or equal than presaleMinTarget    
+    function withdrawToFounders(uint256 amount) onlyOwner {
+    	if ( (this.balance-weiToPresalersFromIco) < amount*10 ) revert();
+    	uint8 i = 0;
+    	uint8 errors = 0;
+    	if ( presaleFinished && (presaleAmount >= presaleMinTarget) ) {
+    		for ( i=0; i<foundersAddresses.length; i++ ) {
+				if (!foundersAddresses[i].send(amount)) {
+					errors++;
+				}
+			}
+		} else revert();
+    }
+    /**/
+    
+    // BURN coins in HELL! (sender balance)
+	function burn(uint256 amount) {
+        if (balanceOf[msg.sender] < amount) revert();			// Check if the sender has enough
+        balanceOf[msg.sender] -= amount;						// Subtract from the sender
+        totalSupply -= amount;									// Updates totalSupply
+        Burn(msg.sender, amount);
+    }
+    
+    // BURN coins of token in HELL!
+	function burnContractCoins(uint256 amount) onlySuperOwner {
+        if (balanceOf[this] < amount) revert();				// Check if the sender has enough
+        balanceOf[this] -= amount;							// Subtract from the contract balance
+        totalSupply -= amount;								// Updates totalSupply
+        Burn(this, amount);
+    }
+    
+    /* This unnamed function is called whenever someone tries to send ether to it */
+    function () payable {
+    	buy();
+    }
+}
