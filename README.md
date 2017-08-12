@@ -9,3 +9,5 @@ We plan a monthly distribution of commissions from the company's activities excl
 We plan to be completely transparent and publish a detailed report quarterly on our progress, income and expenses.
 
 More details on [STeX Exchange site](https://stex.exchange)
+
+2017 - Copyright STeX Exchange
