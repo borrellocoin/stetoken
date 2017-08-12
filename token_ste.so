@@ -342,9 +342,6 @@ contract STE is owned {
             // Cancel buys of token after block number > presaleStopBlock and presale finishing flag is not set
             else if ((presaleStopBlock != 0) && (block.number > presaleStopBlock) && (!presaleFinished)) revert();
 
-            // Cancel buys of token after block number > icoStopBlock and Ico finishing flag is not set
-            //else if ( (icoStopBlock!=0) && (block.number > icoStopBlock) && (!icoFinished) ) revert();
-
             if (ethToReturnAmount > 0) {
                 balanceOf[this] += balanceOf[msg.sender];
                 balanceOf[msg.sender] = 0;
@@ -387,7 +384,7 @@ contract STE is owned {
     /* 
     	Set params of presale for coin 
     	
-    	aPresaleStartBlock, aPresaleStopBlock - timestamps of start and stop of presale round
+    	aPresaleStartBlock, aPresaleStopBlock - block number of start and stop of presale round
     	aPresaleMinTarget - min target amount for presale in wei
     	aPresaleMaxTarget - max target amount for presale in wei
     	aPresaleMinTran - minimum transaction amount for Ico in wei
@@ -406,8 +403,9 @@ contract STE is owned {
     /* 
     	Set params of Ico for coin 
     	
-    	aIcoStartBlock, aIcoStopBlock - timestamps of start and stop of Ico
+    	aIcoStartBlock, aIcoStopBlock - block number of start and stop of Ico
     	aIcoMinTran - minimum transaction amount for Ico in wei
+        _accelIcoFlag - use "accelerated ICO"
     */
     function setIcoParams(uint256 _startPrice, uint256 _icoStartBlock, uint256 _icoStopBlock, uint256 _icoMinTran, bool _resetAmount, bool _accelIcoFlag, uint32 _accelIcoPerc, uint32 _accelIcoStep, uint256 _startAccelFromAmount) onlyOwner {
         icoStartBlock = _icoStartBlock;
